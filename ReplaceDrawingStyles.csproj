@@ -9,7 +9,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>ReplaceDrawingStyles</RootNamespace>
     <AssemblyName>ReplaceDrawingStyles</AssemblyName>
-    <TargetFrameworkVersion>v4.7</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <TargetFrameworkProfile />
   </PropertyGroup>
@@ -37,6 +37,9 @@
     <AssemblyOriginatorKeyFile>Key.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Autodesk.Connectivity.Explorer.Extensibility">
+      <HintPath>..\..\..\..\..\Program Files\Autodesk\Vault Client 2022\Explorer\Autodesk.Connectivity.Explorer.Extensibility.dll</HintPath>
+    </Reference>
     <Reference Include="Autodesk.Connectivity.Explorer.ExtensibilityTools">
       <HintPath>$(ProgramW6432)\Autodesk\Autodesk Vault 2022 SDK\bin\x64\Autodesk.Connectivity.Explorer.ExtensibilityTools.dll</HintPath>
       <Private>False</Private>
@@ -61,6 +64,11 @@
       <HintPath>$(ProgramW6432)\Autodesk\Autodesk Vault 2022 SDK\bin\x64\Autodesk.DataManagement.Client.Framework.Vault.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Autodesk.Inventor.Interop, Version=26.2.0.0, Culture=neutral, PublicKeyToken=d84147f8b4276564, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+      <HintPath>..\..\..\..\..\Program Files\Autodesk\Inventor 2022\Bin\Public Assemblies\Autodesk.Inventor.Interop.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Windows.Forms" />
@@ -74,6 +82,7 @@
   <ItemGroup>
     <Compile Include="JobExtension.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ReplaceDrawingStylesCommandExtension.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="Util.cs" />
   </ItemGroup>
