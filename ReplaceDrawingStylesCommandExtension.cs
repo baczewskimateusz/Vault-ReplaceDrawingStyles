@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.Remoting.Contexts;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -63,68 +64,90 @@ namespace ReplaceDrawingStyles
                 {
                     AddJob(vaultConn, file);
                 }
-
-                MessageBox.Show("Dodaje zadanie do job processora....");
+                MessageBox.Show("Zmiana styli została dodana do kolejki zadań.", "Informacja" ,MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-
         }
 
         private void AddJob(Connection vaultConn, File file )
         {
-
-            JobParam[] jobParams = new JobParam[1];
-
-                jobParams[0] = new JobParam()
+            List<string> nameOfNotAdded  = new List<string>();  
+            JobParam[] jobParams = new JobParam[]
+            {
+                new JobParam()
                 {
                     Name = "FileId",
                     Val = file.Id.ToString()
-                };
+                }
+            };
+            try
+            {
+                vaultConn.WebServiceManager.JobService.AddJob("KRATKI.ReplaceDrawingStyles", $"KRATKI.ReplaceDrawingStyles: {file.Name}", jobParams, 50);
+            }
+            catch 
+            {
+                nameOfNotAdded.Add(file.Name); 
+            }
 
-            vaultConn.WebServiceManager.JobService.AddJob("KRATKI.ReplaceDrawingStyles", $"KRATKI.ReplaceDrawingStyles: {file.Name}", jobParams, 1);
+            if(nameOfNotAdded.Count > 0)
+            {
+                string result = string.Join(", ", nameOfNotAdded);
+                MessageBox.Show($"Wystąpił błąd podaczas dodawania zadania zamiany styli dla modeli: {result}. Skontaktuj się z administratorem.");
+            }
+            
         }
 
         private List<File> GetFiles(Connection vaultConn, object sender, CommandItemEventArgs e)
         {
             long[] selectionId = e.Context.CurrentSelectionSet.Select(n => n.Id).ToArray();
             File[] selectionFiles = vaultConn.WebServiceManager.DocumentService.GetLatestFilesByMasterIds(selectionId);
-
             CommandItem commandItem = (CommandItem)sender;
-
             List<File> files = new List<File>();
-            if (commandItem.Label == "Wszystkie pliki")
+
+            try
             {
-                FileAssocLite[] associationFiles = vaultConn.WebServiceManager.DocumentService.GetFileAssociationLitesByIds(
-                new long[] { selectionFiles[0].Id },
-                FileAssocAlg.LatestTip,
-                FileAssociationTypeEnum.Dependency,
-                false,
-                FileAssociationTypeEnum.Dependency,
-                true,
-                false,
-                false,
-                false
-                );
+                if (commandItem.Label == "Wszystkie pliki")
+                {
+                    FileAssocLite[] associationFiles = vaultConn.WebServiceManager.DocumentService.GetFileAssociationLitesByIds(
+                    new long[] { selectionFiles[0].Id },
+                    FileAssocAlg.LatestTip,
+                    FileAssociationTypeEnum.Dependency,
+                    false,
+                    FileAssociationTypeEnum.Dependency,
+                    true,
+                    false,
+                    false,
+                    false
+                    );
 
-                long[] assocDirectFiles = associationFiles
-                    .Where(file => !file.ExpectedVaultPath.Contains("Biblioteka") & !file.ExpectedVaultPath.Contains("Content Center"))
-                    .Select(n => n.CldFileId).ToArray();
+                    long[] assocDirectFiles = associationFiles
+                        .Where(file => !file.ExpectedVaultPath.Contains("Biblioteka") & !file.ExpectedVaultPath.Contains("Content Center"))
+                        .Select(n => n.CldFileId).ToArray();
 
-                File[] assocFilesArray = vaultConn.WebServiceManager.DocumentService.GetFilesByIds(assocDirectFiles);
+                    File[] assocFilesArray = vaultConn.WebServiceManager.DocumentService.GetFilesByIds(assocDirectFiles);
 
-                files.Add(selectionFiles[0]);
+                    files.Add(selectionFiles[0]);
 
-                files = files.Concat(assocFilesArray.Where(f => !files.Any(existing => existing.Name == f.Name)))
-                    .ToList();
+                    foreach (File file in assocFilesArray)
+                    {
+                        if (!files.Any(f => f.Name == file.Name))
+                        {
+                            files.Add(file);
+                        }
+                    }
+                }
+                else
+                {
+                    files = selectionFiles.ToList();
+                }
             }
-            else
+            catch (Exception ex) 
             {
-                files = selectionFiles.ToList();
+                MessageBox.Show($"Wystąpił błąd: {ex.Message}. Skontaktuj się z administratorem.");
             }
+            
 
             return files;
         }
-
-       
 
         public IEnumerable<CustomEntityHandler> CustomEntityHandlers()
         {

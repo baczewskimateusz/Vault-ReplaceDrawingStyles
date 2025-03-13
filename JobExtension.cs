@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows.Forms;
 using Autodesk.Connectivity.Extensibility.Framework;
 using Autodesk.Connectivity.JobProcessor.Extensibility;
 using Autodesk.Connectivity.WebServices;
@@ -32,6 +33,7 @@ namespace ReplaceDrawingStyles
 
         public JobOutcome Execute(IJobProcessorServices context, IJob job)
         {
+
             try
             {
                 ReplaceStyles(context, job);
@@ -50,8 +52,8 @@ namespace ReplaceDrawingStyles
             Connection vaultConn = context.Connection;
             InventorServer mInv = context.InventorObject as InventorServer;
 
-            bool isInt = long.TryParse(job.Params["FileId"], out long fileId);
-            if (!isInt) { throw new Exception("Id pliku nie jest INT."); }
+            bool isLong = long.TryParse(job.Params["FileId"], out long fileId);
+            if (!isLong) { throw new Exception("Nieprawid³owy typ FileId."); }
 
             ACW.File file = GetFileById(vaultConn, fileId);
 
@@ -59,13 +61,13 @@ namespace ReplaceDrawingStyles
             {
                 SetProject(context, mInv);
             }
-            catch 
+            catch
             {
                 throw;
             }
-     
+
             FileAssocArray associations = vaultConn.WebServiceManager.DocumentService
-                .GetLatestFileAssociationsByMasterIds(new long[] {file.MasterId }, FileAssociationTypeEnum.Dependency, false, FileAssociationTypeEnum.None, false, false, false, false).First();
+                .GetLatestFileAssociationsByMasterIds(new long[] { file.MasterId }, FileAssociationTypeEnum.Dependency, false, FileAssociationTypeEnum.None, false, false, false, false).First();
 
 
             ACW.File drawingToChangeFile = associations.FileAssocs
@@ -73,18 +75,18 @@ namespace ReplaceDrawingStyles
                                       System.IO.Path.GetFileNameWithoutExtension(fa.ParFile.Name) == System.IO.Path.GetFileNameWithoutExtension(file.Name))
                 ?.ParFile;
 
-            
-            FileAcquisitionResult drawingFileResult = DownloadFile(drawingToChangeFile, vaultConn,true);
-            
+
+            FileAcquisitionResult drawingFileResult = DownloadFile(drawingToChangeFile, vaultConn, true);
+
             string drawingFileLocalPath = GetLocalPath(drawingFileResult);
             DrawingDocument drawingDocumentToChange = (DrawingDocument)mInv.Documents.Open(drawingFileLocalPath, false);
 
-            
+
             string fileCatName = file.Cat.CatName;
 
             ACW.File standardDrawFile = null;
 
-            if (fileCatName == "Zespó³" || fileCatName =="Zespó³ spawany")
+            if (fileCatName == "Zespó³" || fileCatName == "Zespó³ spawany")
             {
                 standardDrawFile = FindFile("Standard monta¿.idw", vaultConn);
             }
@@ -110,10 +112,10 @@ namespace ReplaceDrawingStyles
 
 
             TitleBlockDefinition standardTitleBLock = GetTitleBLockDefinitionByName("kratki", oStandardDrawDocument);
-            TitleBlockDefinition newTitleBLock =  standardTitleBLock.CopyTo((_DrawingDocument)drawingDocumentToChange,true);
+            TitleBlockDefinition newTitleBLock = standardTitleBLock.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
 
             BorderDefinition standardBorder = GetBorderDefinitionByName("kratki", oStandardDrawDocument);
-            BorderDefinition newBorderDefinition =  standardBorder.CopyTo((_DrawingDocument)drawingDocumentToChange,true);
+            BorderDefinition newBorderDefinition = standardBorder.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
 
             Sheets sourceDocumentSheets = drawingDocumentToChange.Sheets;
             foreach (Sheet sheet in sourceDocumentSheets)
@@ -127,18 +129,17 @@ namespace ReplaceDrawingStyles
                 {
                     sheet.AddBorder(newBorderDefinition);
                 }
-
-
             }
 
             ChangeStyles(mInv, drawingDocumentToChange);
             ChangeTablePosition(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, mInv);
-
+            ChangeNotePosition(drawingDocumentToChange, hasDocumentTitleBlock, mInv);
             drawingDocumentToChange.Save();
 
             UpdateFile(vaultConn, drawingDocumentToChange, drawingToChangeFile, drawingFileResult);
             AddUpadteItemLinksJob(drawingToChangeFile, vaultConn);
-            
+            AddExportPDFJob(drawingToChangeFile, vaultConn);
+
             vaultConn.WebServiceManager.Dispose();
             mInv = null;
             vaultConn = null;
@@ -177,13 +178,56 @@ namespace ReplaceDrawingStyles
                     Point2d newTablePostion = oTg.CreatePoint2d(oTableNewPostitionX, oTableNewPostitionY);
                     oPartsList.Position = newTablePostion;
                 }
-
-
             }
         }
 
+        private void ChangeNotePosition(DrawingDocument drawDocument,Dictionary<Sheet, bool> hasDocumentTitleBlock, InventorServer mInv)
+        {
+            PartsList oPartsList = null;
+            TransientGeometry oTg = mInv.TransientGeometry;
+            Point2d positionPoint;
+            GeneralNote generalNote = null;
 
+            foreach (Sheet sheet in drawDocument.Sheets)
+            {
+                sheet.Activate();
+                PartsLists oPartsLists = sheet.PartsLists;
 
+                foreach (DrawingNote drawingNote in sheet.DrawingNotes)
+                {
+                    if (drawingNote.Type == ObjectTypeEnum.kGeneralNoteObject && (drawingNote.Text.ToLower().Contains("uwaga") || drawingNote.Text.ToLower().Contains("uwagi")))
+                    {
+                        generalNote = (GeneralNote)drawingNote;
+                    }
+                }
+
+                if (generalNote == null) { return; }
+
+                if (sheet.DrawingNotes.Count > 0)
+                {
+                    if (oPartsLists.Count > 0)
+                    {
+                        oPartsList = oPartsLists[1];
+
+                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, oPartsList.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
+                    }
+                    else if (hasDocumentTitleBlock[sheet] == true)
+                    {
+                        TitleBlock titleBlock = sheet.TitleBlock;
+
+                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, titleBlock.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
+                    }
+                    else 
+                    {
+                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, generalNote.FittedTextHeight + 0.6);
+                    }
+                }
+
+                else { return; }
+
+                generalNote.Position = positionPoint;
+            }
+        }
         private Dictionary<Sheet, bool> HasTitleBlock(DrawingDocument drawingDocument)
         {
             Sheets documentSheets = drawingDocument.Sheets;
@@ -194,7 +238,6 @@ namespace ReplaceDrawingStyles
                 if (titleBlock == null) { titleBlockDict.Add(sheet, false); }
                 else { titleBlockDict.Add(sheet, true); }
             }
-
             return titleBlockDict;  
         }
 
@@ -215,9 +258,7 @@ namespace ReplaceDrawingStyles
         public void UpdateFile(Connection vaultConn, DrawingDocument drawingDocument, ACW.File drawingFile, FileAcquisitionResult fileResult)
         {
             Stream fileCont = new FileStream(drawingDocument.FullFileName, FileMode.Open, FileAccess.Read);
-
             byte[] fileContents = new byte[fileCont.Length];
-
             //ByteArray uploadTicket = UploadFileResource(vaultConn.WebServiceManager, drawingDocument.FullFileName, fileContents);
 
             FileAssocArray[] drawAssoc = vaultConn.WebServiceManager.DocumentService
@@ -282,17 +323,17 @@ namespace ReplaceDrawingStyles
             {
                 string name = replacingStyle.Name;
 
-                try
+                if (replacingStyle.Name.Contains("Vault") && replacingStyle.StyleType != StyleTypeEnum.kStandardStyleType)
                 {
-                    if (replacingStyle.Name.Contains("Vault") && replacingStyle.StyleType != StyleTypeEnum.kStandardStyleType)
-                    {
-                        
-                        ObjectCollection objects = transientObjects.CreateObjectCollection();
-                        
-                        styleName = replacingStyle.Name;
-                        styleName = styleName.Replace(" VaultAddin","");
 
-                        foreach(Style styleToReplace in drawingStyles)
+                    ObjectCollection objects = transientObjects.CreateObjectCollection();
+
+                    styleName = replacingStyle.Name;
+                    styleName = styleName.Replace(" VaultAddin", "");
+
+                    try
+                    {
+                        foreach (Style styleToReplace in drawingStyles)
                         {
                             if (styleToReplace.Name == styleName && styleToReplace.Type == replacingStyle.Type && styleToReplace.InUse)
                             {
@@ -300,15 +341,17 @@ namespace ReplaceDrawingStyles
                                 stylesManager.ReplaceStyles(objects, replacingStyle, false);
                                 break;
                             }
-                        }                        
+                        }
                     }
+                    catch (Exception ex)
+                    {
+                        //throw new Exception($"Wyst¹pi³ b³¹d podczas zamiany stylu {styleToReplace.Name} na {replacingStyle.Name}.");
+                    }
+                    
                 }
-                catch  { throw new Exception($"Stylename: {replacingStyle.Name}. Style type: {replacingStyle.StyleType}. "); }
+  
             }
         }
-
-
-
         private void ClearReferencedTitleBLock(DrawingDocument oStandardDrawDocument)
         {
             TitleBlockDefinitions titleBlockDefinitions = oStandardDrawDocument.TitleBlockDefinitions;
@@ -390,16 +433,63 @@ namespace ReplaceDrawingStyles
 
         private void AddUpadteItemLinksJob(ACW.File file, Connection vaultCon)
         {
+            
+            Item item = vaultCon.WebServiceManager.ItemService.GetItemsByFileId(file.Id).FirstOrDefault();
+
+            if (item == null) { return; }
+
             JobParam[] jobParams = new JobParam[]
             { new JobParam()
-            {
+                {
                 Name = "FileId",
-                    Val = file.Id.ToString()
+                Val = file.Id.ToString()
                 }
             };
+
             try
             {
                 vaultCon.WebServiceManager.JobService.AddJob("KRATKI.UpdateItemLinks", $"KRATKI.UpdateItemLinks: {file.Name}", jobParams, 10);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Wyst¹pi³ b³¹d podczas dodawania zadania do job processora. {ex.InnerException}.");
+            }
+        }
+
+        private void AddExportPDFJob(ACW.File file, Connection vaultCon)
+        {
+            JobParam[] jobParams = new JobParam[]
+            { 
+                new JobParam()
+                {
+                    Name = "FileMasterId",
+                    Val = file.MasterId.ToString()
+                },
+                new JobParam()
+                {
+                    Name = "FileName",
+                    Val = file.Name
+                },
+                new JobParam()
+                {
+                    Name = "EntID",
+                    Val = file.MasterId.ToString()
+                },
+                new JobParam()
+                {
+                    Name = "EntityClassId",
+                    Val = "FILE" 
+                },
+                new JobParam()
+                {
+                    Name = "ExportFomats",
+                    Val = "PDF"
+                }
+            };
+
+            try
+            {
+                vaultCon.WebServiceManager.JobService.AddJob("ASP.ExportJob.PDF", $"ASP.ExportJob.PDF - {file.Name}", jobParams, 10);
             }
             catch (Exception ex)
             {
