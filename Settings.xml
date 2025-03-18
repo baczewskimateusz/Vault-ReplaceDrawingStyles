@@ -5,6 +5,6 @@
     <SettingName>Value</SettingName>
   
   <!-- Output Path -->
-  <!--<OutputPath>C:\Temp\SD124422\</OutputPath>-->
+  <OutputPath>C:\Temp\</OutputPath>
 
 </settings>

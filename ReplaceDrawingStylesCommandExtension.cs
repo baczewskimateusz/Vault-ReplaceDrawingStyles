@@ -1,20 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Runtime.Remoting.Contexts;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows;
 using System.Windows.Forms;
-using System.Xml.Linq;
 using Autodesk.Connectivity.Explorer.Extensibility;
-using Autodesk.Connectivity.Extensibility.Framework;
 using Autodesk.Connectivity.WebServices;
-using Autodesk.Connectivity.WebServicesTools;
 using Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections;
-using ACW = Autodesk.Connectivity.WebServices;
 
 namespace ReplaceDrawingStyles
 {

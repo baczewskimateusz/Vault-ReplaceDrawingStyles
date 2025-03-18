@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Windows.Forms;
 using Autodesk.Connectivity.Extensibility.Framework;
 using Autodesk.Connectivity.JobProcessor.Extensibility;
 using Autodesk.Connectivity.WebServices;
@@ -33,7 +32,6 @@ namespace ReplaceDrawingStyles
 
         public JobOutcome Execute(IJobProcessorServices context, IJob job)
         {
-
             try
             {
                 ReplaceStyles(context, job);
@@ -52,36 +50,163 @@ namespace ReplaceDrawingStyles
             Connection vaultConn = context.Connection;
             InventorServer mInv = context.InventorObject as InventorServer;
 
-            bool isLong = long.TryParse(job.Params["FileId"], out long fileId);
-            if (!isLong) { throw new Exception("Nieprawid³owy typ FileId."); }
-
-            ACW.File file = GetFileById(vaultConn, fileId);
-
+         
+            // Znajdz plik 
+            ACW.File file = GetFileById(vaultConn, job.Params["FileId"]);
+           
             try
             {
+               
+                // Ustaw projekt InventorServer
                 SetProject(context, mInv);
+                
+                // Znajdz plik rysunek do zmiany
+                ACW.File drawingToChangeFile = GetDrawingToChangeFile(vaultConn, file);
+
+                // Pobranie pliku rysunku dla wskazanej czeœci/z³o¿enia
+                FileAcquisitionResult drawingFileResult = DownloadFile(drawingToChangeFile, vaultConn, true);
+
+                //Otwórz rysunek
+                DrawingDocument drawingDocumentToChange = OpenDocument(mInv, drawingFileResult);
+
+
+                //znajdŸ standardowy rysunek (rysunek z którego bierzemy style/tabelkê/ramkê
+                ACW.File standardDrawFile = GetStandardDrawingFile(vaultConn, file);
+
+                // SprawdŸ ramki i bloki tytu³owe
+                Dictionary<Sheet, bool> hasDocumentBorder = HasBorder(drawingDocumentToChange);
+                Dictionary<Sheet, bool> hasDocumentTitleBlock = HasTitleBlock(drawingDocumentToChange);
+
+                // Wyczyœæ wszystkie elementy rysunku
+                ClearDrawingElements(drawingDocumentToChange);
+
+                // pobierz stanadrdowy rysunek
+                FileAcquisitionResult standardDraw = DownloadFile(standardDrawFile, vaultConn);
+
+                //Otwórz rysunek standardowy
+                DrawingDocument oStandardDrawDocument = OpenDocument(mInv, standardDraw);
+
+                //string standardDrawLocalPath = GetLocalPath(standardDraw);
+                //DrawingDocument oStandardDrawDocument = (DrawingDocument)mInv.Documents.Open(standardDrawLocalPath, false);
+
+                //dodaj tabelkê rysunkowa i ramkê
+                AddTitleBLockAndBorder(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, oStandardDrawDocument);
+
+                // zmieñ style
+                ChangeStyles(mInv, drawingDocumentToChange);
+
+                //zmieñ pozycjê listy czêœci
+                ChangeTablePosition(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, mInv);
+
+                //zmien pozycjê opisów
+                ChangeNotePosition(drawingDocumentToChange, hasDocumentTitleBlock, mInv);
+
+                //zmiana jêzyka na polski
+                //ChangeBendNoteLanguage(drawingDocumentToChange);
+
+                //zapisz i uaktualinj plik w vaulcie
+                drawingDocumentToChange.Update();
+                drawingDocumentToChange.Save();
+                UpdateFile(vaultConn, drawingDocumentToChange, drawingToChangeFile, drawingFileResult);
+
+                //dodaj zadanie aktualizacji po³¹czeñ miedzy plikem a itemem
+                AddUpadteItemLinksJob(drawingToChangeFile, vaultConn);
+
+                // dodaj zadanie eksportowanie PDF
+                AddExportPDFJob(drawingToChangeFile, vaultConn);
             }
             catch
             {
+                if (file.CheckedOut)
+                {
+                    vaultConn.WebServiceManager.DocumentService.UndoCheckoutFile(file.MasterId, out ByteArray downloadTicket);
+                }
                 throw;
             }
+            finally
+            {
+                vaultConn.WebServiceManager.Dispose();
+                mInv = null;
+                vaultConn = null;
+            }
+        }
 
-            FileAssocArray associations = vaultConn.WebServiceManager.DocumentService
-                .GetLatestFileAssociationsByMasterIds(new long[] { file.MasterId }, FileAssociationTypeEnum.Dependency, false, FileAssociationTypeEnum.None, false, false, false, false).First();
+        private void ChangeBendNoteLanguage(DrawingDocument doc)
+        {
+            string bendNoteText;
+            foreach(Sheet sheet in doc.Sheets)
+            {   
+                BendNotes bendNotes = sheet.DrawingNotes.BendNotes;
 
+                if (bendNotes.Count > 0)
+                {
+                    foreach(BendNote bendNote in bendNotes)
+                    {
+                        bendNoteText = bendNote.Text;
+                        if (bendNote.Text.Contains("UP"))
+                        {
+                            bendNoteText = bendNoteText.Replace("DOWN", "W DÓ£");
+                            bendNote.Text = bendNoteText;
+                        }
+                        else if (bendNote.Text.Contains("DOWN"))
+                        {
+                            bendNoteText = bendNoteText.Replace("DOWN", "W DÓ£");
+                            bendNote.Text = bendNoteText;
+                        }
+                    }
+                }
+            }
+        }
 
-            ACW.File drawingToChangeFile = associations.FileAssocs
-                .FirstOrDefault(fa => fa.ParFile.Name.Contains(".idw") &&
-                                      System.IO.Path.GetFileNameWithoutExtension(fa.ParFile.Name) == System.IO.Path.GetFileNameWithoutExtension(file.Name))
-                ?.ParFile;
+        private void AddTitleBLockAndBorder(DrawingDocument drawingDocumentToChange, Dictionary<Sheet, bool> hasDocumentBorder, Dictionary<Sheet, bool> hasDocumentTitleBlock, DrawingDocument oStandardDrawDocument)
+        {
+            try
+            {
+                TitleBlockDefinition standardTitleBLock = GetTitleBLockDefinitionByName("kratki", oStandardDrawDocument);
+                TitleBlockDefinition newTitleBLock = standardTitleBLock.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
 
+                BorderDefinition standardBorder = GetBorderDefinitionByName("kratki", oStandardDrawDocument);
+                BorderDefinition newBorderDefinition = standardBorder.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
 
-            FileAcquisitionResult drawingFileResult = DownloadFile(drawingToChangeFile, vaultConn, true);
+                Sheets sourceDocumentSheets = drawingDocumentToChange.Sheets;
+                foreach (Sheet sheet in sourceDocumentSheets)
+                {
+                    sheet.Activate();
+                    if (hasDocumentTitleBlock[sheet] == true)
+                    {
+                        sheet.AddTitleBlock(newTitleBLock);
+                    }
+                    if (hasDocumentBorder[sheet] == true)
+                    {
+                        sheet.AddBorder(newBorderDefinition);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Wyst¹pi³ b³¹d podczas dodawania tabeli lub ramki: {drawingDocumentToChange.DisplayName}. Metoda: {nameof(AddTitleBLockAndBorder)}. Szczegó³y: {ex.Message}", ex);
+            }
+           
+        }
 
-            string drawingFileLocalPath = GetLocalPath(drawingFileResult);
-            DrawingDocument drawingDocumentToChange = (DrawingDocument)mInv.Documents.Open(drawingFileLocalPath, false);
+        private void ClearDrawingElements(DrawingDocument drawingDocumentToChange)
+        {
+            try
+            {
+                ClearBorder(drawingDocumentToChange);
+                ClearTitleBLock(drawingDocumentToChange);
+                ClearReferencedBorder(drawingDocumentToChange);
+                ClearReferencedTitleBLock(drawingDocumentToChange);
+            }
+            catch(Exception ex)
+            {
+                throw new Exception($"Wyst¹pi³ b³¹d podczas otwierania rysunku dla pliku: {drawingDocumentToChange.DisplayName}. Metoda: {nameof(ClearDrawingElements)}. Szczegó³y: {ex.Message}", ex);
+            }
+            
+        }
 
-
+        private ACW.File GetStandardDrawingFile(Connection vaultConn, ACW.File file)
+        {
             string fileCatName = file.Cat.CatName;
 
             ACW.File standardDrawFile = null;
@@ -90,60 +215,64 @@ namespace ReplaceDrawingStyles
             {
                 standardDrawFile = FindFile("Standard monta¿.idw", vaultConn);
             }
-            else if (fileCatName == "Czêœæ" || fileCatName == "Blacha")
+            else if (fileCatName == "Czêœæ" || fileCatName == "Blacha" || fileCatName == "Kszta³townik z ContentCenter")
             {
                 standardDrawFile = FindFile("Standard czêœæ.idw", vaultConn);
             }
             else { throw new Exception("Nieznana kategoria pliku"); }
 
-            Dictionary<Sheet, bool> hasDocumentBorder = HasBorder(drawingDocumentToChange);
-            Dictionary<Sheet, bool> hasDocumentTitleBlock = HasTitleBlock(drawingDocumentToChange);
+            return standardDrawFile;
+        }
 
-            ClearBorder(drawingDocumentToChange);
-            ClearTitleBLock(drawingDocumentToChange);
-
-            ClearReferencedBorder(drawingDocumentToChange);
-            ClearReferencedTitleBLock(drawingDocumentToChange);
-
-            FileAcquisitionResult standardDraw = DownloadFile(standardDrawFile, vaultConn);
-            string standardDrawLocalPath = GetLocalPath(standardDraw);
-
-            DrawingDocument oStandardDrawDocument = (DrawingDocument)mInv.Documents.Open(standardDrawLocalPath, false);
-
-
-            TitleBlockDefinition standardTitleBLock = GetTitleBLockDefinitionByName("kratki", oStandardDrawDocument);
-            TitleBlockDefinition newTitleBLock = standardTitleBLock.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
-
-            BorderDefinition standardBorder = GetBorderDefinitionByName("kratki", oStandardDrawDocument);
-            BorderDefinition newBorderDefinition = standardBorder.CopyTo((_DrawingDocument)drawingDocumentToChange, true);
-
-            Sheets sourceDocumentSheets = drawingDocumentToChange.Sheets;
-            foreach (Sheet sheet in sourceDocumentSheets)
+        private DrawingDocument OpenDocument(InventorServer mInv, FileAcquisitionResult drawingFileResult)
+        {
+            string drawingFileLocalPath;
+            DrawingDocument drawingDocument;
+            try
             {
-                sheet.Activate();
-                if (hasDocumentTitleBlock[sheet] == true)
-                {
-                    sheet.AddTitleBlock(newTitleBLock);
-                }
-                if (hasDocumentBorder[sheet] == true)
-                {
-                    sheet.AddBorder(newBorderDefinition);
-                }
+                drawingFileLocalPath = GetLocalPath(drawingFileResult);
+
+                drawingDocument = (DrawingDocument)mInv.Documents.Open(drawingFileLocalPath, false);
+            }
+            catch(Exception ex)
+            {
+                throw new Exception($"Wyst¹pi³ b³¹d podczas otwierania rysunku dla pliku: {drawingFileResult.File.EntityName}. Metoda: {nameof(OpenDocument)}. Szczegó³y: {ex.Message}", ex);
             }
 
-            ChangeStyles(mInv, drawingDocumentToChange);
-            ChangeTablePosition(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, mInv);
-            ChangeNotePosition(drawingDocumentToChange, hasDocumentTitleBlock, mInv);
-            drawingDocumentToChange.Save();
+            if (drawingFileLocalPath == null)
+            {
+                throw new Exception($"Nie znaleziono rysunku dla pliku: {drawingFileResult.File.EntityName}");
+            }
 
-            UpdateFile(vaultConn, drawingDocumentToChange, drawingToChangeFile, drawingFileResult);
-            AddUpadteItemLinksJob(drawingToChangeFile, vaultConn);
-            AddExportPDFJob(drawingToChangeFile, vaultConn);
 
-            vaultConn.WebServiceManager.Dispose();
-            mInv = null;
-            vaultConn = null;
+            return drawingDocument;
+        }
 
+        private static ACW.File GetDrawingToChangeFile(Connection vaultConn, ACW.File file)
+        {
+            ACW.File drawingToChangeFile;
+            try
+            {
+                FileAssocArray associations = vaultConn.WebServiceManager.DocumentService
+                     .GetLatestFileAssociationsByMasterIds(new long[] { file.MasterId }, FileAssociationTypeEnum.Dependency, false, FileAssociationTypeEnum.None, false, false, false, false).First();
+
+
+                drawingToChangeFile = associations.FileAssocs
+                    .FirstOrDefault(fa => fa.ParFile.Name.Contains(".idw") &&
+                                          System.IO.Path.GetFileNameWithoutExtension(fa.ParFile.Name) == System.IO.Path.GetFileNameWithoutExtension(file.Name))
+                    ?.ParFile;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Wyst¹pi³ b³¹d podczas szukania rysunku dla pliku: {file.Name}. Metoda: {nameof(GetDrawingToChangeFile)}. Szczegó³y: {ex.Message}", ex);
+            }
+            
+            if (drawingToChangeFile == null)
+            {
+                throw new Exception($"Nie znaleziono rysunku dla pliku: {file}");
+            }
+
+            return drawingToChangeFile;
         }
 
         private void ChangeTablePosition(DrawingDocument drawDocument, Dictionary<Sheet, bool> hasDocumentBorder, Dictionary<Sheet, bool> hasDocumentTitleBlock,InventorServer mInv)
@@ -161,10 +290,10 @@ namespace ReplaceDrawingStyles
                 }
                 else { return; }
 
-                if ((hasDocumentTitleBlock[sheet] == true && hasDocumentTitleBlock[sheet] == true) || hasDocumentTitleBlock[sheet])
+                if ((hasDocumentTitleBlock[sheet] == true && hasDocumentBorder[sheet] == true) || hasDocumentTitleBlock[sheet])
                 {
                     TitleBlock oTitleBlock = sheet.TitleBlock;
-                    oTableNewPostitionX = oTitleBlock.RangeBox.MinPoint.X + oPartsList.RangeBox.MaxPoint.X - oPartsList.RangeBox.MinPoint.X;
+                    oTableNewPostitionX = sheet.Width - 0.6;
                     oTableNewPostitionY = oTitleBlock.RangeBox.MaxPoint.Y + oPartsList.RangeBox.MaxPoint.Y - oPartsList.RangeBox.MinPoint.Y;
 
                     Point2d newTablePostion = oTg.CreatePoint2d(oTableNewPostitionX, oTableNewPostitionY);
@@ -185,7 +314,7 @@ namespace ReplaceDrawingStyles
         {
             PartsList oPartsList = null;
             TransientGeometry oTg = mInv.TransientGeometry;
-            Point2d positionPoint;
+            Point2d positionPoint=null;
             GeneralNote generalNote = null;
 
             foreach (Sheet sheet in drawDocument.Sheets)
@@ -193,39 +322,78 @@ namespace ReplaceDrawingStyles
                 sheet.Activate();
                 PartsLists oPartsLists = sheet.PartsLists;
 
+                if (sheet.DrawingNotes.Count == 0)
+                {
+                    return;
+                }
+               
                 foreach (DrawingNote drawingNote in sheet.DrawingNotes)
                 {
+
                     if (drawingNote.Type == ObjectTypeEnum.kGeneralNoteObject && (drawingNote.Text.ToLower().Contains("uwaga") || drawingNote.Text.ToLower().Contains("uwagi")))
                     {
                         generalNote = (GeneralNote)drawingNote;
+                        
+                       
+                        if (hasDocumentTitleBlock[sheet] == true)
+                        {
+                            TitleBlock titleBlock = sheet.TitleBlock;
+                            if (titleBlock.RangeBox.MinPoint.X - 1 > generalNote.FittedTextWidth)
+                            {
+
+                                positionPoint = oTg.CreatePoint2d(titleBlock.RangeBox.MinPoint.X - generalNote.FittedTextWidth, generalNote.FittedTextHeight + 0.6);
+                            }
+                            else
+                            {
+                                positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, titleBlock.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
+                            }
+
+                        }
+                        else if (oPartsLists.Count > 0)
+                        {
+                            oPartsList = oPartsLists[1];
+
+                            if (oPartsList.RangeBox.MinPoint.X - 1 > generalNote.FittedTextWidth)
+                            {
+
+                                positionPoint = oTg.CreatePoint2d(oPartsList.RangeBox.MinPoint.X - generalNote.FittedTextWidth, generalNote.FittedTextHeight + 0.6);
+                            }
+                            else
+                            {
+                                positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, oPartsList.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
+                            }
+                        }
+                        else
+                        {
+                            positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, generalNote.FittedTextHeight + 0.6);
+                        }
                     }
+                    else if (drawingNote.Type == ObjectTypeEnum.kGeneralNoteObject)
+                    {
+                        generalNote = (GeneralNote)drawingNote;
+                        if (oPartsLists.Count > 0)
+                        {
+                            if(generalNote.RangeBox.MaxPoint.X > oPartsList.RangeBox.MinPoint.X && generalNote.RangeBox.MinPoint.Y < oPartsList.RangeBox.MaxPoint.Y)
+                            {
+                                positionPoint = oTg.CreatePoint2d(generalNote.Position.X, generalNote.FittedTextHeight + oPartsList.RangeBox.MaxPoint.Y);
+                            }
+                        }
+                        else if (hasDocumentTitleBlock[sheet] == true)
+                        {
+                            TitleBlock titleBlock = sheet.TitleBlock;
+                            if (generalNote.RangeBox.MaxPoint.X > titleBlock.RangeBox.MinPoint.X && generalNote.RangeBox.MinPoint.Y < titleBlock.RangeBox.MaxPoint.Y)
+                            {
+                                positionPoint = oTg.CreatePoint2d(generalNote.Position.X, generalNote.FittedTextHeight + titleBlock.RangeBox.MaxPoint.Y);
+                            }
+                        }
+                    }
+                    if (positionPoint != null) 
+                    {
+                        generalNote.Position = positionPoint;
+                    }
+
+                    
                 }
-
-                if (generalNote == null) { return; }
-
-                if (sheet.DrawingNotes.Count > 0)
-                {
-                    if (oPartsLists.Count > 0)
-                    {
-                        oPartsList = oPartsLists[1];
-
-                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, oPartsList.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
-                    }
-                    else if (hasDocumentTitleBlock[sheet] == true)
-                    {
-                        TitleBlock titleBlock = sheet.TitleBlock;
-
-                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, titleBlock.RangeBox.MaxPoint.Y + generalNote.FittedTextHeight);
-                    }
-                    else 
-                    {
-                        positionPoint = oTg.CreatePoint2d(sheet.Width - 0.8 - generalNote.FittedTextWidth, generalNote.FittedTextHeight + 0.6);
-                    }
-                }
-
-                else { return; }
-
-                generalNote.Position = positionPoint;
             }
         }
         private Dictionary<Sheet, bool> HasTitleBlock(DrawingDocument drawingDocument)
@@ -281,7 +449,7 @@ namespace ReplaceDrawingStyles
             }
             string localPath = drawingDocument.FullDocumentName;
             drawingDocument.Close(true);
-
+            
             FileIteration mUploadedFile = vaultConn.FileManager.CheckinFile(fileResult.File,
                 "Created by Job Processor",
                 false, mFileAssocParams.ToArray(),
@@ -343,9 +511,8 @@ namespace ReplaceDrawingStyles
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        //throw new Exception($"Wyst¹pi³ b³¹d podczas zamiany stylu {styleToReplace.Name} na {replacingStyle.Name}.");
                     }
                     
                 }
@@ -607,54 +774,103 @@ namespace ReplaceDrawingStyles
             }
             catch (Exception ex)
             {
-                throw new Exception($"Wyst¹pi³ b³¹d podczas pobierania pliku. {ex.InnerException}");
+                throw new Exception($"Wyst¹pi³ b³¹d podczas pobierania pliku: {downloadFile.Name}. Metoda: {nameof(DownloadFile)}. {ex.InnerException}");
             }
 
             return file;
         }
 
 
-        private ACW.File GetFileById(Connection vaultConn, long fileId)
+        private ACW.File GetFileById(Connection vaultConn, string fileId)
         {
             ACW.File file = null;
+            if (!long.TryParse(fileId, out long id)) 
+            { 
+                throw new Exception("Nieprawid³owy typ FileId."); 
+            }
+
             try
             {
                 WebServiceManager webServiceManager = vaultConn.WebServiceManager;
                 DocumentService documentService = webServiceManager.DocumentService;
 
-                file = documentService.GetFileById(fileId);
+                file = documentService.GetFileById(id);
+               
             }
             catch (Exception ex) 
             {
-                throw new Exception($"Wyst¹pi³ b³¹d podczas szukania pliku po ID. {ex.InnerException}");
+                throw new Exception($"Wyst¹pi³ b³¹d podczas szukania pliku po ID. Metoda: {nameof(GetFileById)}. Szczegó³y: {ex.Message}", ex);
             }
-            
+
+            if (file == null)
+            {
+                throw new Exception($"Nie znaleziono pliku dla ID: {id}");
+            }
 
             return file;
         }
 
-        public void OnJobProcessorShutdown(IJobProcessorServices context)
+        private void SetDesignData(IJobProcessorServices context, InventorServer mInv)
         {
-            //throw new NotImplementedException();
-        }
-        public void OnJobProcessorSleep(IJobProcessorServices context)
-        {
-            //throw new NotImplementedException();
-        }
-        public void OnJobProcessorStartup(IJobProcessorServices context)
-        {
-            //throw new NotImplementedException();
-        }
-        public void OnJobProcessorWake(IJobProcessorServices context)
-        {
-            //throw new NotImplementedException();
-        }
+            ACW.Folder mDesignDataFolder;
+            Connection connection = context.Connection;
+            Autodesk.Connectivity.WebServicesTools.WebServiceManager mWsMgr = connection.WebServiceManager;
 
-        #endregion IJobHandler Implementation
+            try
+            {
+               //get the projects drawingFile object for download
+                ACW.PropDef[] filePropDefs = mWsMgr.PropertyService.GetPropertyDefinitionsByEntityClassId("FILE");
+                ACW.PropDef mNamePropDef = filePropDefs.Single(n => n.SysName == "Name");
+                ACW.SrchCond mSrchCond = new ACW.SrchCond()
+                {
+                    PropDefId = mNamePropDef.Id,
+                    PropTyp = ACW.PropertySearchType.SingleProperty,
+                    SrchOper = 3, // is equal
+                    SrchRule = ACW.SearchRuleType.Must,
+                    SrchTxt = "Design Data"
+                };
+                string bookmark = string.Empty;
+                ACW.SrchStatus status = null;
+                List<ACW.Folder> totalResults = new List<ACW.Folder>();
+                while (status == null || totalResults.Count < status.TotalHits)
+                {
+                    ACW.Folder[] results = mWsMgr.DocumentService.FindFoldersBySearchConditions(new ACW.SrchCond[] { mSrchCond },
+                        null, null, false, ref bookmark, out status);
+                    if (results != null)
+                        totalResults.AddRange(results);
+                    else
+                        break;
+                }
+                if (totalResults.Count == 1)
+                {
+                    mDesignDataFolder = totalResults[0];
+                }
+                else
+                {
+                    throw new Exception("Job execution stopped due to ambigous project drawingFile definitions; single project drawingFile per Vault expected");
+                }
 
+                string localPath = mDesignDataFolder.FullName.Replace(@"$", @"C:\Vault").Replace(@"/",@"\");
+
+                if(System.IO.Directory.Exists(localPath))
+                {
+                    mInv.FileOptions.DesignDataPath = localPath;
+                }
+                else 
+                {
+                    throw new Exception("Nie uda³o siê znaleŸæ lokalnie folderu Design Data");
+                }
+             
+
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Zadanie nie mog³o aktywowaæ pliku projektu Inventor – Uwaga: Plik .ipj nie mo¿e byæ wypo¿yczony przez innego u¿ytkownika.", ex.InnerException);
+            }
+        }
         private void SetProject(IJobProcessorServices context, InventorServer mInv)
         {
-            
+
             Inventor.DesignProjectManager projectManager;
             Inventor.DesignProject mSaveProject = null, mProject = null;
             String mIpjPath = "";
@@ -737,16 +953,35 @@ namespace ReplaceDrawingStyles
                 {
                 }
                 mProject = projectManager.DesignProjects.AddExisting(mIpjLocalPath);
+
                 mProject.Activate();
+
             }
             catch (Exception ex)
             {
                 throw new Exception("Zadanie nie mog³o aktywowaæ pliku projektu Inventor – Uwaga: Plik .ipj nie mo¿e byæ wypo¿yczony przez innego u¿ytkownika.", ex.InnerException);
             }
         }
+        public void OnJobProcessorShutdown(IJobProcessorServices context)
+        {
+            //throw new NotImplementedException();
+        }
+        public void OnJobProcessorSleep(IJobProcessorServices context)
+        {
+            //throw new NotImplementedException();
+        }
+        public void OnJobProcessorStartup(IJobProcessorServices context)
+        {
+            //throw new NotImplementedException();
+        }
+        public void OnJobProcessorWake(IJobProcessorServices context)
+        {
+            //throw new NotImplementedException();
+        }
 
+        #endregion IJobHandler Implementation
 
-
+       
 
 
     }

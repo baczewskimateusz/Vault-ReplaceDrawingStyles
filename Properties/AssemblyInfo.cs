@@ -1,16 +1,15 @@
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("API Onboarding - Custom Job")]
-[assembly: AssemblyDescription("API Introduction Sample 02 - Custom Job")]
+[assembly: AssemblyTitle("Kratki - Aktualizacja styli")]
+[assembly: AssemblyDescription("Aktualizowanie styli, tabeli rysunkowej i ramki na rysunku.")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Autodesk")]
-[assembly: AssemblyProduct("Autodesk Vault Professional - API Sample")]
-[assembly: AssemblyCopyright("Copyright © Autodesk 2021")]
+[assembly: AssemblyCompany("Kratki")]
+[assembly: AssemblyProduct("Kratki - Aktualizacja styli")]
+[assembly: AssemblyCopyright("Copyright © Kratki 2025")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
