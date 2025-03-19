@@ -97,33 +97,21 @@ namespace ReplaceDrawingStyles
             {
                 if (commandItem.Label == "Wszystkie pliki")
                 {
-                    FileAssocLite[] associationFiles = vaultConn.WebServiceManager.DocumentService.GetFileAssociationLitesByIds(
-                    new long[] { selectionFiles[0].Id },
-                    FileAssocAlg.LatestTip,
-                    FileAssociationTypeEnum.Dependency,
+                    FilePathArray associationFiles = vaultConn.WebServiceManager.DocumentService.GetLatestAssociatedFilePathsByMasterIds(
+                    new long[] { selectionFiles[0].MasterId },
+                    FileAssociationTypeEnum.None,
                     false,
                     FileAssociationTypeEnum.Dependency,
                     true,
                     false,
                     false,
                     false
-                    );
+                    ).First();
 
-                    long[] assocDirectFiles = associationFiles
-                        .Where(file => !file.ExpectedVaultPath.Contains("Biblioteka") & !file.ExpectedVaultPath.Contains("Content Center"))
-                        .Select(n => n.CldFileId).ToArray();
-
-                    File[] assocFilesArray = vaultConn.WebServiceManager.DocumentService.GetFilesByIds(assocDirectFiles);
-
-                    files.Add(selectionFiles[0]);
-
-                    foreach (File file in assocFilesArray)
-                    {
-                        if (!files.Any(f => f.Name == file.Name))
-                        {
-                            files.Add(file);
-                        }
-                    }
+                    files = associationFiles.FilePaths
+                        .Where(file => !file.Path.ToString().Contains("Biblioteka") && !file.Path.ToString().Contains("Content Center"))
+                        .Select(n=>n.File)
+                        .ToList();
                 }
                 else
                 {
@@ -135,7 +123,6 @@ namespace ReplaceDrawingStyles
                 MessageBox.Show($"Wystąpił błąd: {ex.Message}. Skontaktuj się z administratorem.");
             }
             
-
             return files;
         }
 

@@ -14,12 +14,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
-using Autodesk.Connectivity.WebServices;
-using Autodesk.Connectivity.WebServicesTools;
-using Autodesk.DataManagement.Client.Framework.Vault.Currency.Connections;
-using Autodesk.DataManagement.Client.Framework.Vault.Results;
-using Autodesk.DataManagement.Client.Framework.Vault.Settings;
 using VDF = Autodesk.DataManagement.Client.Framework;
 
 namespace ReplaceDrawingStyles

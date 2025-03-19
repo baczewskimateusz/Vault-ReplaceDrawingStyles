@@ -50,16 +50,16 @@ namespace ReplaceDrawingStyles
             Connection vaultConn = context.Connection;
             InventorServer mInv = context.InventorObject as InventorServer;
 
-         
             // Znajdz plik 
             ACW.File file = GetFileById(vaultConn, job.Params["FileId"]);
            
             try
             {
-               
                 // Ustaw projekt InventorServer
                 SetProject(context, mInv);
-                
+                //IPJactivate(mInv, vaultConn, vaultConn.WebServiceManager);
+
+
                 // Znajdz plik rysunek do zmiany
                 ACW.File drawingToChangeFile = GetDrawingToChangeFile(vaultConn, file);
 
@@ -68,7 +68,6 @@ namespace ReplaceDrawingStyles
 
                 //Otwórz rysunek
                 DrawingDocument drawingDocumentToChange = OpenDocument(mInv, drawingFileResult);
-
 
                 //znajdŸ standardowy rysunek (rysunek z którego bierzemy style/tabelkê/ramkê
                 ACW.File standardDrawFile = GetStandardDrawingFile(vaultConn, file);
@@ -96,7 +95,7 @@ namespace ReplaceDrawingStyles
                 ChangeStyles(mInv, drawingDocumentToChange);
 
                 //zmieñ pozycjê listy czêœci
-                ChangeTablePosition(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, mInv);
+                ChangePartsListPosition(drawingDocumentToChange, hasDocumentBorder, hasDocumentTitleBlock, mInv);
 
                 //zmien pozycjê opisów
                 ChangeNotePosition(drawingDocumentToChange, hasDocumentTitleBlock, mInv);
@@ -232,7 +231,7 @@ namespace ReplaceDrawingStyles
             {
                 drawingFileLocalPath = GetLocalPath(drawingFileResult);
 
-                drawingDocument = (DrawingDocument)mInv.Documents.Open(drawingFileLocalPath, false);
+                drawingDocument = (DrawingDocument)mInv.Documents.Open(drawingFileLocalPath, true);
             }
             catch(Exception ex)
             {
@@ -244,7 +243,7 @@ namespace ReplaceDrawingStyles
                 throw new Exception($"Nie znaleziono rysunku dla pliku: {drawingFileResult.File.EntityName}");
             }
 
-
+            drawingDocument.Update2();
             return drawingDocument;
         }
 
@@ -255,7 +254,6 @@ namespace ReplaceDrawingStyles
             {
                 FileAssocArray associations = vaultConn.WebServiceManager.DocumentService
                      .GetLatestFileAssociationsByMasterIds(new long[] { file.MasterId }, FileAssociationTypeEnum.Dependency, false, FileAssociationTypeEnum.None, false, false, false, false).First();
-
 
                 drawingToChangeFile = associations.FileAssocs
                     .FirstOrDefault(fa => fa.ParFile.Name.Contains(".idw") &&
@@ -275,7 +273,7 @@ namespace ReplaceDrawingStyles
             return drawingToChangeFile;
         }
 
-        private void ChangeTablePosition(DrawingDocument drawDocument, Dictionary<Sheet, bool> hasDocumentBorder, Dictionary<Sheet, bool> hasDocumentTitleBlock,InventorServer mInv)
+        private void ChangePartsListPosition(DrawingDocument drawDocument, Dictionary<Sheet, bool> hasDocumentBorder, Dictionary<Sheet, bool> hasDocumentTitleBlock,InventorServer mInv)
         {
             PartsList oPartsList =null;
             TransientGeometry oTg = mInv.TransientGeometry;
@@ -288,7 +286,7 @@ namespace ReplaceDrawingStyles
                 {
                     oPartsList = sheet.PartsLists[1];    
                 }
-                else { return; }
+                else { continue; }
 
                 if ((hasDocumentTitleBlock[sheet] == true && hasDocumentBorder[sheet] == true) || hasDocumentTitleBlock[sheet])
                 {
@@ -301,7 +299,7 @@ namespace ReplaceDrawingStyles
                 }
                 else
                 {
-                    oTableNewPostitionX = sheet.Width-0.6;
+                    oTableNewPostitionX = sheet.Width - 0.6;
                     oTableNewPostitionY = 0.6 + oPartsList.RangeBox.MaxPoint.Y - oPartsList.RangeBox.MinPoint.Y;
 
                     Point2d newTablePostion = oTg.CreatePoint2d(oTableNewPostitionX, oTableNewPostitionY);
@@ -703,8 +701,6 @@ namespace ReplaceDrawingStyles
             return uploadTicket;
         }
 
-
-
         public ACW.File FindFile(string templateName, Connection vaultConn)
         {
             ACW.SrchCond mSrchCond = new ACW.SrchCond()
@@ -738,7 +734,6 @@ namespace ReplaceDrawingStyles
 
             return null;
         }
-
         public string GetLocalPath(FileAcquisitionResult file)
         {
             string localPath = file.LocalPath.FullPath;
@@ -779,8 +774,6 @@ namespace ReplaceDrawingStyles
 
             return file;
         }
-
-
         private ACW.File GetFileById(Connection vaultConn, string fileId)
         {
             ACW.File file = null;
@@ -809,7 +802,6 @@ namespace ReplaceDrawingStyles
 
             return file;
         }
-
         private void SetDesignData(IJobProcessorServices context, InventorServer mInv)
         {
             ACW.Folder mDesignDataFolder;
